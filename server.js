@@ -11,10 +11,11 @@ app.use(express.json());
 const verificationCodes = {};
 
 const db = mysql.createConnection({
-    host: 'localhost',
+    host: '140.134.24.157',
+    port: '43306',
     user: 'root',
-    password: '1128',
-    database: 'Traffic_Detect_System'
+    password: '114iecsproject',
+    database: 'detect'
 });
 
 db.connect(err => {
