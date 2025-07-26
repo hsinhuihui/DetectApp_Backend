@@ -248,10 +248,16 @@ app.get('/user/:id/reminder', (req, res) => {
     });
 });
 
-// 啟動伺服器 手機
-app.listen(3000, '172.20.10.11', () => {
-    console.log('伺服器啟動在 http://172.20.10.11:3000');
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`伺服器啟動在 http://localhost:${PORT}`);
 });
+
+
+// 啟動伺服器 手機
+/*app.listen(3000, '172.20.10.11', () => {
+    console.log('伺服器啟動在 http://172.20.10.11:3000');
+});*/
 
 // Macbook 172.20.10.2 10.22.134.61
 
