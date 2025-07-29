@@ -249,8 +249,9 @@ app.get('/user/:id/reminder', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`伺服器啟動在 http://localhost:${PORT}`);
+const HOST = '0.0.0.0'; // 必須使用 0.0.0.0 才能讓 Render 接收外部請求
+app.listen(PORT, HOST, () => {
+    console.log(`伺服器啟動在 http://${HOST}:${PORT}`);
 });
 
 
