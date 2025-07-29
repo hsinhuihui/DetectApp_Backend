@@ -180,7 +180,7 @@ app.post('/signin', (req, res) => {
         if (err) return res.status(500).send(err);
         if (results.length === 0) return res.status(401).json({ message: '帳號錯誤' });
 
-        const storedHash = results[0].PASSWORD;
+        const storedHash = results[0].password;
         bcrypt.compare(password, storedHash, (err, isMatch) => {
             if (err) return res.status(500).send(err);
             if (!isMatch) return res.status(401).json({ message: '密碼錯誤' });
