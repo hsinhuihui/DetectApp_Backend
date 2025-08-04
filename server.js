@@ -248,6 +248,11 @@ app.get('/user/:id/reminder', (req, res) => {
     });
 });
 
+// 根目錄 GET 請求回應，避免 Render 或 UptimeRobot 顯示 404
+app.get('/', (req, res) => {
+    res.send('Server is running.');
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // 必須使用 0.0.0.0 才能讓 Render 接收外部請求
 app.listen(PORT, HOST, () => {
