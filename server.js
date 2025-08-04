@@ -253,12 +253,15 @@ app.get('/', (req, res) => {
     res.send('Server is running.');
 });
 
+app.head('/', (req, res) => {
+    res.sendStatus(200);
+});
+
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0'; // 必須使用 0.0.0.0 才能讓 Render 接收外部請求
 app.listen(PORT, HOST, () => {
     console.log(`伺服器啟動在 http://${HOST}:${PORT}`);
 });
-
 
 // 啟動伺服器 手機
 /*app.listen(3000, '172.20.10.11', () => {
