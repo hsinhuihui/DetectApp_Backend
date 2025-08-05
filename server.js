@@ -121,27 +121,33 @@ app.post('/forget-password/request', (req, res) => {
         if (results.length === 0) return res.status(404).send({ message: '此信箱尚未註冊' });
 
         const code = Math.floor(100000 + Math.random() * 900000);
-        verificationCodes[email] = {
-            code,
-            createdAt: Date.now(),
-            verified: false
-        };
+        const createdAt = new Date();
 
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: { user: 'trafficdetect@gmail.com', pass: 'azfxksjucsladpri' }
-        });
+        const upsertSql = `
+            INSERT INTO email_verification (email, code, user_id, created_at, verified)
+            VALUES (?, ?, NULL, ?, FALSE)
+            ON DUPLICATE KEY UPDATE code = VALUES(code), created_at = VALUES(created_at), verified = FALSE
+        `;
 
-        const mailOptions = {
-            from: 'trafficdetect@gmail.com',
-            to: email,
-            subject: '忘記密碼驗證碼',
-            text: `您的驗證碼為：${code}`
-        };
+        db.query(upsertSql, [email, code, createdAt], (err) => {
+            if (err) return res.status(500).send({ message: '寫入驗證碼失敗', error: err });
 
-        transporter.sendMail(mailOptions, error => {
-            if (error) return res.status(500).send({ message: '寄信失敗', error });
-            res.status(200).send({ message: '驗證碼已寄出' });
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: { user: 'trafficdetect@gmail.com', pass: 'azfxksjucsladpri' }
+            });
+
+            const mailOptions = {
+                from: 'trafficdetect@gmail.com',
+                to: email,
+                subject: '忘記密碼驗證碼',
+                text: `您的驗證碼為：${code}`
+            };
+
+            transporter.sendMail(mailOptions, error => {
+                if (error) return res.status(500).send({ message: '寄信失敗', error });
+                res.status(200).send({ message: '驗證碼已寄出' });
+            });
         });
     });
 });
@@ -149,43 +155,47 @@ app.post('/forget-password/request', (req, res) => {
 //忘記密碼-驗證
 app.post('/forget-password/verify', (req, res) => {
     const { email, code } = req.body;
-    const entry = verificationCodes[email];
+    const checkSql = 'SELECT * FROM email_verification WHERE email = ?';
 
-    if (!entry) return res.status(400).send({ message: '請先申請驗證碼' });
+    db.query(checkSql, [email], (err, results) => {
+        if (err) return res.status(500).send({ message: '驗證碼查詢失敗', error: err });
+        if (results.length === 0) return res.status(400).send({ message: '請先申請驗證碼' });
 
-    const expired = Date.now() - entry.createdAt > 5 * 60 * 1000; // 5 分鐘有效
-    if (expired) {
-        delete verificationCodes[email];
-        return res.status(400).send({ message: '驗證碼已過期' });
-    }
+        const entry = results[0];
+        const expired = new Date() - new Date(entry.created_at) > 5 * 60 * 1000;
+        if (expired) return res.status(400).send({ message: '驗證碼已過期' });
+        if (entry.code !== code) return res.status(400).send({ message: '驗證碼錯誤' });
 
-    if (entry.code != code) {
-        return res.status(400).send({ message: '驗證碼錯誤' });
-    }
-
-    verificationCodes[email].verified = true;
-    res.status(200).send({ message: '驗證成功' });
+        const updateSql = 'UPDATE email_verification SET verified = TRUE WHERE email = ?';
+        db.query(updateSql, [email], (err) => {
+            if (err) return res.status(500).send({ message: '更新驗證狀態失敗', error: err });
+            res.status(200).send({ message: '驗證成功' });
+        });
+    });
 });
 
 // 重設密碼
 app.post('/reset-password', (req, res) => {
     const { email, new_password } = req.body;
-    const entry = verificationCodes[email];
+    const checkSql = 'SELECT * FROM email_verification WHERE email = ? AND verified = TRUE';
 
-    if (!entry || !entry.verified) {
-        return res.status(403).send({ message: '請先完成驗證碼驗證' });
-    }
+    db.query(checkSql, [email], (err, results) => {
+        if (err) return res.status(500).send({ message: '驗證狀態查詢失敗', error: err });
+        if (results.length === 0) return res.status(403).send({ message: '請先完成驗證碼驗證' });
 
-    const saltRounds = 10;
-    bcrypt.hash(new_password, saltRounds, (err, hashedPassword) => {
-        if (err) return res.status(500).send({ message: '密碼加密失敗', error: err });
+        bcrypt.hash(new_password, 10, (err, hashedPassword) => {
+            if (err) return res.status(500).send({ message: '密碼加密失敗', error: err });
 
-        const sql = 'UPDATE user SET password = ? WHERE email = ?';
-        db.query(sql, [hashedPassword, email], (err) => {
-            if (err) return res.status(500).send({ message: '密碼更新失敗', error: err });
+            const updateUserSql = 'UPDATE user SET password = ? WHERE email = ?';
+            db.query(updateUserSql, [hashedPassword, email], (err) => {
+                if (err) return res.status(500).send({ message: '密碼更新失敗', error: err });
 
-            delete verificationCodes[email];
-            res.status(200).send({ message: '密碼已成功更新' });
+                // 驗證完成後重設 verified 狀態
+                const resetVerifySql = 'UPDATE email_verification SET verified = FALSE WHERE email = ?';
+                db.query(resetVerifySql, [email], () => {
+                    res.status(200).send({ message: '密碼已成功更新' });
+                });
+            });
         });
     });
 });
