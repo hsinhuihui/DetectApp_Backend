@@ -8,7 +8,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const verificationCodes = {};
+//const verificationCodes = {};
 
 const db = mysql.createConnection({
     host: '140.134.24.157',
@@ -36,23 +36,33 @@ app.post('/precheck', (req, res) => {
         if (results.length > 0) return res.status(400).send({ message: '帳號或使用者ID已存在' });
 
         const code = Math.floor(100000 + Math.random() * 900000);
-        verificationCodes[email] = { code, user_id, createdAt: Date.now() };
+        const createdAt = new Date();
 
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: { user: 'trafficdetect@gmail.com', pass: 'azfxksjucsladpri' }
-        });
+        const upsertSql = `
+            INSERT INTO email_verification (email, code, user_id, created_at, verified)
+            VALUES (?, ?, ?, ?, FALSE)
+            ON DUPLICATE KEY UPDATE code = VALUES(code), created_at = VALUES(created_at), verified = FALSE
+        `;
 
-        const mailOptions = {
-            from: 'trafficdetect@gmail.com',
-            to: email,
-            subject: '註冊驗證碼',
-            text: `您的驗證碼為：${code}`
-        };
+        db.query(upsertSql, [email, code, user_id, createdAt], (err) => {
+            if (err) return res.status(500).send({ message: '寫入驗證碼失敗', error: err });
 
-        transporter.sendMail(mailOptions, error => {
-            if (error) return res.status(500).send({ message: '驗證信寄送失敗', error });
-            res.status(200).send({ message: '驗證碼已寄出' });
+            const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: { user: 'trafficdetect@gmail.com', pass: 'azfxksjucsladpri' }
+            });
+
+            const mailOptions = {
+                from: 'trafficdetect@gmail.com',
+                to: email,
+                subject: '註冊驗證碼',
+                text: `您的驗證碼為：${code}`
+            };
+
+            transporter.sendMail(mailOptions, error => {
+                if (error) return res.status(500).send({ message: '驗證信寄送失敗', error });
+                res.status(200).send({ message: '驗證碼已寄出' });
+            });
         });
     });
 });
@@ -61,29 +71,40 @@ app.post('/precheck', (req, res) => {
 app.post('/signup', (req, res) => {
     const { email, user_id, password, code } = req.body;
 
-    if (!verificationCodes[email] || verificationCodes[email].code != code) {
-        return res.status(400).send({ message: '驗證碼錯誤或已過期' });
-    }
+    const checkSql = 'SELECT * FROM email_verification WHERE email = ?';
+    db.query(checkSql, [email], (err, results) => {
+        if (err) return res.status(500).send({ message: '驗證碼查詢失敗', error: err });
+        if (results.length === 0) return res.status(400).send({ message: '請先申請驗證碼' });
 
-    const sqlSensitivity = 'INSERT INTO sensitivity (value) VALUES (2)';
-    db.query(sqlSensitivity, (err, sensitivityResult) => {
-        if (err) return res.status(500).send({ message: '新增 sensitivity 失敗', error: err });
+        const entry = results[0];
+        const expired = new Date() - new Date(entry.created_at) > 5 * 60 * 1000;
 
-        const sensitivityId = sensitivityResult.insertId;
-        const sqlReminder = 'INSERT INTO reminder (voice_reminder, shock_reminder) VALUES (1, 1)';
-        db.query(sqlReminder, (err, reminderResult) => {
-            if (err) return res.status(500).send({ message: '新增 reminder 失敗', error: err });
+        if (expired) return res.status(400).send({ message: '驗證碼已過期' });
+        if (entry.code !== code) return res.status(400).send({ message: '驗證碼錯誤' });
 
-            const reminderId = reminderResult.insertId;
-            const saltRounds = 10;
-            bcrypt.hash(password, saltRounds, (err, hashedPassword) => {
-                if (err) return res.status(500).send({ message: '密碼加密失敗', error: err });
+        const sqlSensitivity = 'INSERT INTO sensitivity (value) VALUES (2)';
+        db.query(sqlSensitivity, (err, sensitivityResult) => {
+            if (err) return res.status(500).send({ message: '新增 sensitivity 失敗', error: err });
 
-                const sqlUser = 'INSERT INTO user (user_id, email, password, sensitivity_id, reminder_id) VALUES (?, ?, ?, ?, ?)';
-                db.query(sqlUser, [user_id, email, hashedPassword, sensitivityId, reminderId], (err) => {
-                    if (err) return res.status(500).send({ message: '新增 user 失敗', error: err });
-                    delete verificationCodes[email];
-                    res.status(200).send({ message: '註冊成功' });
+            const sensitivityId = sensitivityResult.insertId;
+            const sqlReminder = 'INSERT INTO reminder (voice_reminder, shock_reminder) VALUES (1, 1)';
+            db.query(sqlReminder, (err, reminderResult) => {
+                if (err) return res.status(500).send({ message: '新增 reminder 失敗', error: err });
+
+                const reminderId = reminderResult.insertId;
+                bcrypt.hash(password, 10, (err, hashedPassword) => {
+                    if (err) return res.status(500).send({ message: '密碼加密失敗', error: err });
+
+                    const sqlUser = 'INSERT INTO user (user_id, email, password, sensitivity_id, reminder_id) VALUES (?, ?, ?, ?, ?)';
+                    db.query(sqlUser, [user_id, email, hashedPassword, sensitivityId, reminderId], (err) => {
+                        if (err) return res.status(500).send({ message: '新增 user 失敗', error: err });
+
+                        // 更新驗證狀態為已驗證
+                        const verifySql = 'UPDATE email_verification SET verified = TRUE WHERE email = ?';
+                        db.query(verifySql, [email], () => {
+                            res.status(200).send({ message: '註冊成功' });
+                        });
+                    });
                 });
             });
         });
@@ -146,7 +167,6 @@ app.post('/forget-password/verify', (req, res) => {
     res.status(200).send({ message: '驗證成功' });
 });
 
-
 // 重設密碼
 app.post('/reset-password', (req, res) => {
     const { email, new_password } = req.body;
@@ -169,7 +189,6 @@ app.post('/reset-password', (req, res) => {
         });
     });
 });
-
 
 // 登入
 app.post('/signin', (req, res) => {
