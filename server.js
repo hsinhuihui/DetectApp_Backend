@@ -267,6 +267,10 @@ app.get('/user/:id/reminder', (req, res) => {
     });
 });
 
+app.get('/ping', (req, res) => {
+    res.send('pong');
+});
+
 // 根目錄 GET 請求回應，避免 Render 或 UptimeRobot 顯示 404
 app.get('/', (req, res) => {
     res.send('Server is running.');
